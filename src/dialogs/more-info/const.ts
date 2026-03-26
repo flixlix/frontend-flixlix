@@ -7,6 +7,22 @@ import { CONTINUOUS_DOMAINS } from "../../data/logbook";
 import type { HomeAssistant } from "../../types";
 import { isNumericEntity } from "../../data/history";
 
+export const MORE_INFO_VIEWS = [
+  "info",
+  "history",
+  "settings",
+  "related",
+  "add_to",
+  "details",
+] as const;
+
+export type MoreInfoView = (typeof MORE_INFO_VIEWS)[number];
+
+export const isMoreInfoView = (
+  value: string | undefined
+): value is MoreInfoView =>
+  value !== undefined && (MORE_INFO_VIEWS as readonly string[]).includes(value);
+
 export const DOMAINS_NO_INFO = ["camera", "configurator"];
 /**
  * Entity domains that should be editable *if* they have an id present;
@@ -88,7 +104,6 @@ export const DOMAINS_HIDE_DEFAULT_MORE_INFO = [
   "select",
   "text",
   "update",
-  "event",
 ];
 
 /** Domains that should have the history hidden in the more info dialog. */

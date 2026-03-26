@@ -67,7 +67,7 @@ export class HuiHeadingCard extends LitElement implements LovelaceCard {
   public getGridOptions(): LovelaceGridOptions {
     return {
       columns: "full",
-      rows: this._config?.heading_style === "subtitle" ? "auto" : 1,
+      rows: "auto",
       min_columns: 3,
     };
   }
@@ -153,7 +153,7 @@ export class HuiHeadingCard extends LitElement implements LovelaceCard {
       flex-direction: row;
       justify-content: space-between;
       align-items: center;
-      overflow: hidden;
+      overflow: visible;
       gap: var(--ha-space-2);
     }
     .content:hover ha-icon-next {

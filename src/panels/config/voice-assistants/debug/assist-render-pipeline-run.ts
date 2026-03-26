@@ -1,23 +1,23 @@
 import type { TemplateResult } from "lit";
 import { css, html, LitElement, nothing } from "lit";
 import { customElement, property } from "lit/decorators";
-import "../../../../components/ha-card";
+import { formatNumber } from "../../../../common/number/format_number";
+import type { LocalizeKeys } from "../../../../common/translations/localize";
 import "../../../../components/ha-alert";
 import "../../../../components/ha-button";
-import "../../../../components/ha-spinner";
+import "../../../../components/ha-card";
 import "../../../../components/ha-expansion-panel";
-import type { PipelineRun } from "../../../../data/assist_pipeline";
-import type { HomeAssistant } from "../../../../types";
-import { formatNumber } from "../../../../common/number/format_number";
+import "../../../../components/ha-spinner";
 import "../../../../components/ha-yaml-editor";
-import { showAlertDialog } from "../../../../dialogs/generic/show-dialog-box";
-import type { LocalizeKeys } from "../../../../common/translations/localize";
+import type { PipelineRun } from "../../../../data/assist_pipeline";
 import type {
-  ChatLogAssistantContent,
   ChatLog,
+  ChatLogAssistantContent,
   ChatLogContent,
   ChatLogUserContent,
 } from "../../../../data/chat_log";
+import { showAlertDialog } from "../../../../dialogs/generic/show-dialog-box";
+import type { HomeAssistant } from "../../../../types";
 
 const RUN_DATA = ["pipeline", "language"];
 const WAKE_WORD_DATA = ["engine"];
@@ -129,7 +129,12 @@ const dataMinusKeysRender = (
         <span slot="header"
           >${hass.localize("ui.panel.config.voice_assistants.debug.raw")}</span
         >
-        <ha-yaml-editor readOnly autoUpdate .value=${result}></ha-yaml-editor>
+        <ha-yaml-editor
+          readOnly
+          autoUpdate
+          .hass=${hass}
+          .value=${result}
+        ></ha-yaml-editor>
       </ha-expansion-panel>`
     : "";
 };
@@ -215,57 +220,64 @@ export class AssistPipelineDebug extends LitElement {
             ? html`
                 <div class="messages">
                   ${messages.map((content) =>
-                    content.role === "system" || content.role === "tool_result"
-                      ? html`
-                          <ha-expansion-panel
-                            class="content-expansion ${content.role}"
-                          >
-                            <div slot="header">
-                              ${content.role === "system"
-                                ? "System"
-                                : `Result for ${content.tool_name}`}
-                            </div>
-                            ${content.role === "system"
-                              ? html`<pre>${content.content}</pre>`
-                              : html`
-                                  <ha-yaml-editor
-                                    read-only
-                                    auto-update
-                                    .value=${content}
-                                  ></ha-yaml-editor>
-                                `}
-                          </ha-expansion-panel>
-                        `
-                      : html`
-                          ${content.content
-                            ? html`
-                                <div class=${`message ${content.role}`}>
-                                  ${content.content}
-                                </div>
-                              `
-                            : nothing}
-                          ${content.role === "assistant" &&
-                          content.tool_calls?.length
-                            ? html`
-                                <ha-expansion-panel
-                                  class="content-expansion assistant"
-                                >
-                                  <span slot="header">
-                                    Call
-                                    ${content.tool_calls.length === 1
-                                      ? content.tool_calls[0].tool_name
-                                      : `${content.tool_calls.length} tools`}
-                                  </span>
+                    content.role === "system"
+                      ? content.content
+                        ? html`
+                            <ha-expansion-panel
+                              class="content-expansion ${content.role}"
+                            >
+                              <div slot="header">System</div>
+                              <pre>${content.content}</pre>
+                            </ha-expansion-panel>
+                          `
+                        : nothing
+                      : content.role === "tool_result"
+                        ? html`
+                            <ha-expansion-panel
+                              class="content-expansion ${content.role}"
+                            >
+                              <div slot="header">
+                                Result for ${content.tool_name}
+                              </div>
+                              <ha-yaml-editor
+                                read-only
+                                auto-update
+                                .hass=${this.hass}
+                                .value=${content}
+                              ></ha-yaml-editor>
+                            </ha-expansion-panel>
+                          `
+                        : html`
+                            ${content.content
+                              ? html`
+                                  <div class=${`message ${content.role}`}>
+                                    ${content.content}
+                                  </div>
+                                `
+                              : nothing}
+                            ${content.role === "assistant" &&
+                            content.tool_calls?.length
+                              ? html`
+                                  <ha-expansion-panel
+                                    class="content-expansion assistant"
+                                  >
+                                    <span slot="header">
+                                      Call
+                                      ${content.tool_calls.length === 1
+                                        ? content.tool_calls[0].tool_name
+                                        : `${content.tool_calls.length} tools`}
+                                    </span>
 
-                                  <ha-yaml-editor
-                                    read-only
-                                    auto-update
-                                    .value=${content.tool_calls}
-                                  ></ha-yaml-editor>
-                                </ha-expansion-panel>
-                              `
-                            : nothing}
-                        `
+                                    <ha-yaml-editor
+                                      read-only
+                                      auto-update
+                                      .hass=${this.hass}
+                                      .value=${content.tool_calls}
+                                    ></ha-yaml-editor>
+                                  </ha-expansion-panel>
+                                `
+                              : nothing}
+                          `
                   )}
                 </div>
                 <div style="clear:both"></div>
@@ -523,6 +535,7 @@ export class AssistPipelineDebug extends LitElement {
           <ha-yaml-editor
             read-only
             auto-update
+            .hass=${this.hass}
             .value=${this.pipelineRun}
           ></ha-yaml-editor>
         </ha-expansion-panel>
@@ -657,6 +670,10 @@ export class AssistPipelineDebug extends LitElement {
       background-color: var(--light-primary-color);
       color: var(--text-light-primary-color, var(--primary-text-color));
       direction: var(--direction);
+    }
+
+    .tool_result [slot="header"] {
+      color: var(--text-light-primary-color, var(--primary-text-color));
     }
 
     .message.user,

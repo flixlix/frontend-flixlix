@@ -25,11 +25,11 @@ export class HaMarkdown extends LitElement {
 
   @property({ type: Boolean }) public cache = false;
 
-  @query("ha-markdown-element") private _markdownElement!: ReactiveElement;
+  @query("ha-markdown-element") private _markdownElement?: ReactiveElement;
 
   protected async getUpdateComplete() {
     const result = await super.getUpdateComplete();
-    await this._markdownElement.updateComplete;
+    await this._markdownElement?.updateComplete;
     return result;
   }
 
@@ -71,14 +71,9 @@ export class HaMarkdown extends LitElement {
       color: var(--markdown-link-color, var(--primary-color));
     }
     img {
-      background-color: rgba(10, 10, 10, 0.15);
+      background-color: var(--markdown-image-background-color);
       border-radius: var(--markdown-image-border-radius);
       max-width: 100%;
-      min-height: 2lh;
-      height: auto;
-      width: auto;
-      text-indent: 4px;
-      transition: height 0.2s ease-in-out;
     }
     p:first-child > img:first-child {
       vertical-align: top;
@@ -86,17 +81,14 @@ export class HaMarkdown extends LitElement {
     p:first-child > img:last-child {
       vertical-align: top;
     }
-    ol,
-    ul {
-      padding-inline-start: 1rem;
+    ha-markdown-element > :is(ol, ul) {
+      padding-inline-start: var(--markdown-list-indent, revert);
     }
-    li {
-      &:has(input[type="checkbox"]) {
-        list-style: none;
-        & > input[type="checkbox"] {
-          margin-left: 0;
-        }
-      }
+    li:has(input[type="checkbox"]) {
+      list-style: none;
+    }
+    li:has(input[type="checkbox"]) > input[type="checkbox"] {
+      margin-left: 0;
     }
     svg {
       background-color: var(--markdown-svg-background-color, none);
@@ -138,6 +130,53 @@ export class HaMarkdown extends LitElement {
       border-bottom: none;
       margin: var(--ha-space-4) 0;
     }
+    table[role="presentation"] {
+      --markdown-table-border-collapse: separate;
+      --markdown-table-border-width: 0;
+      --markdown-table-padding-inline: 0;
+      --markdown-table-padding-block: 0;
+    }
+    table[role="presentation"] th,
+    table[role="presentation"] td {
+      vertical-align: middle;
+    }
+    table[role="presentation"] td[valign="top"],
+    table[role="presentation"] th[valign="top"] {
+      vertical-align: top;
+    }
+    table[role="presentation"] td[valign="middle"],
+    table[role="presentation"] th[valign="middle"] {
+      vertical-align: middle;
+    }
+    table[role="presentation"] td[valign="bottom"],
+    table[role="presentation"] th[valign="bottom"] {
+      vertical-align: bottom;
+    }
+    table[role="presentation"] td[valign="baseline"],
+    table[role="presentation"] th[valign="baseline"] {
+      vertical-align: baseline;
+    }
+    @supports (border-width: attr(border px, 0)) {
+      table[role="presentation"] {
+        --markdown-table-border-width: attr(border px, 0);
+      }
+      table[role="presentation"] th,
+      table[role="presentation"] td {
+        vertical-align: attr(valign, middle);
+      }
+    }
+    table[role="presentation"][border="0"] {
+      --markdown-table-border-width: 0;
+    }
+    table[role="presentation"][border="1"] {
+      --markdown-table-border-width: 1px;
+    }
+    table[role="presentation"][border="2"] {
+      --markdown-table-border-width: 2px;
+    }
+    table[role="presentation"][border="3"] {
+      --markdown-table-border-width: 3px;
+    }
     table {
       border-collapse: var(--markdown-table-border-collapse, collapse);
     }
@@ -145,14 +184,15 @@ export class HaMarkdown extends LitElement {
       overflow: auto;
     }
     th {
-      text-align: start;
+      text-align: var(--markdown-table-text-align, start);
     }
     td,
     th {
       border-width: var(--markdown-table-border-width, 1px);
       border-style: var(--markdown-table-border-style, solid);
       border-color: var(--markdown-table-border-color, var(--divider-color));
-      padding: 0.25em 0.5em;
+      padding-inline: var(--markdown-table-padding-inline, 0.5em);
+      padding-block: var(--markdown-table-padding-block, 0.25em);
     }
     blockquote {
       border-left: 4px solid var(--divider-color);

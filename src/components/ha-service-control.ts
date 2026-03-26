@@ -1,4 +1,4 @@
-import { mdiHelpCircle } from "@mdi/js";
+import { mdiHelpCircleOutline } from "@mdi/js";
 import type {
   HassService,
   HassServices,
@@ -467,7 +467,7 @@ export class HaServiceControl extends LitElement {
 
     const descriptionPlaceholders =
       domain && serviceName
-        ? this.hass.services[domain][serviceName].description_placeholders
+        ? this.hass.services[domain]?.[serviceName]?.description_placeholders
         : undefined;
 
     const description =
@@ -507,7 +507,7 @@ export class HaServiceControl extends LitElement {
                   rel="noreferrer"
                 >
                   <ha-icon-button
-                    .path=${mdiHelpCircle}
+                    .path=${mdiHelpCircleOutline}
                     class="help-icon"
                   ></ha-icon-button>
                 </a>`
@@ -726,6 +726,7 @@ export class HaServiceControl extends LitElement {
               : undefined}
             .placeholder=${dataField.default}
             .localizeValue=${this._localizeValueCallback}
+            .required=${dataField.required}
           ></ha-selector>
         </ha-settings-row>`
       : "";

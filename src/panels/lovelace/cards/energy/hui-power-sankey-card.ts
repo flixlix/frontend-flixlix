@@ -5,8 +5,14 @@ import { customElement, property, state } from "lit/decorators";
 import { classMap } from "lit/directives/class-map";
 import "../../../../components/ha-card";
 import "../../../../components/ha-svg-icon";
+import { fireEvent } from "../../../../common/dom/fire_event";
 import type { EnergyData, EnergyPreferences } from "../../../../data/energy";
-import { getEnergyDataCollection } from "../../../../data/energy";
+import {
+  formatPowerShort,
+  getEnergyDataCollection,
+  getPowerFromState,
+  validateEnergyCollectionKey,
+} from "../../../../data/energy";
 import { SubscribeMixin } from "../../../../mixins/subscribe-mixin";
 import type { HomeAssistant } from "../../../../types";
 import type { LovelaceCard, LovelaceGridOptions } from "../../types";
@@ -14,7 +20,6 @@ import type { PowerSankeyCardConfig } from "../types";
 import "../../../../components/chart/ha-sankey-chart";
 import type { Link, Node } from "../../../../components/chart/ha-sankey-chart";
 import { getGraphColorByIndex } from "../../../../common/color/colors";
-import { formatNumber } from "../../../../common/number/format_number";
 import { getEntityContext } from "../../../../common/entity/context/get_entity_context";
 import { MobileAwareMixin } from "../../../../mixins/mobile-aware-mixin";
 
@@ -23,8 +28,9 @@ const DEFAULT_CONFIG: Partial<PowerSankeyCardConfig> = {
   group_by_area: true,
 };
 
-// Minimum power threshold in kW to display a device node
-const MIN_POWER_THRESHOLD = 0.01;
+// Minimum power threshold as a fraction of total consumption to display a device node
+// Devices below this threshold will be grouped into an "Other" node
+const MIN_POWER_THRESHOLD_FACTOR = 0.001; // 0.1% of used_total
 
 interface PowerData {
   solar: number;
@@ -42,16 +48,41 @@ interface PowerData {
   used_total: number;
 }
 
+interface SmallConsumer {
+  statRate: string;
+  name: string | undefined;
+  value: number;
+  effectiveParent: string | undefined;
+  idx: number;
+}
+
 @customElement("hui-power-sankey-card")
 class HuiPowerSankeyCard
   extends SubscribeMixin(MobileAwareMixin(LitElement))
   implements LovelaceCard
 {
+  public static async getConfigElement() {
+    await import("../../editor/config-elements/hui-energy-sankey-card-editor");
+    return document.createElement("hui-energy-sankey-card-editor");
+  }
+
   @property({ attribute: false }) public hass!: HomeAssistant;
 
   @property({ attribute: false }) public layout?: string;
 
   @state() private _config?: PowerSankeyCardConfig;
+
+  public static getStubConfig(
+    _hass: HomeAssistant,
+    _entities: string[],
+    _entitiesFill: string[]
+  ): PowerSankeyCardConfig {
+    return {
+      type: "power-sankey",
+      layout: "auto",
+      ...DEFAULT_CONFIG,
+    };
+  }
 
   @state() private _data?: EnergyData;
 
@@ -60,6 +91,9 @@ class HuiPowerSankeyCard
   protected hassSubscribeRequiredHostProps = ["_config"];
 
   public setConfig(config: PowerSankeyCardConfig): void {
+    if (config.collection_key) {
+      validateEnergyCollectionKey(config.collection_key);
+    }
     this._config = { ...DEFAULT_CONFIG, ...config };
   }
 
@@ -128,15 +162,16 @@ class HuiPowerSankeyCard
     const powerData = this._computePowerData(prefs);
     const computedStyle = getComputedStyle(this);
 
+    // Calculate dynamic threshold based on total consumption
+    const minPowerThreshold = powerData.used_total * MIN_POWER_THRESHOLD_FACTOR;
+
     const nodes: Node[] = [];
     const links: Link[] = [];
 
     // Create home node
     const homeNode: Node = {
       id: "home",
-      label: this.hass.localize(
-        "ui.panel.lovelace.cards.energy.energy_distribution.home"
-      ),
+      label: this.hass.config.location_name,
       value: Math.max(0, powerData.used_total),
       color: computedStyle.getPropertyValue("--primary-color").trim(),
       index: 1,
@@ -235,7 +270,7 @@ class HuiPowerSankeyCard
         color: computedStyle
           .getPropertyValue("--energy-grid-return-color")
           .trim(),
-        index: 2,
+        index: 1,
       });
       if (powerData.battery_to_grid > 0) {
         links.push({
@@ -273,7 +308,7 @@ class HuiPowerSankeyCard
     prefs.device_consumption.forEach((device) => {
       if (device.stat_rate) {
         const value = this._getCurrentPower(device.stat_rate);
-        if (value >= MIN_POWER_THRESHOLD) {
+        if (value >= minPowerThreshold) {
           renderedStatRates.add(device.stat_rate);
         }
       }
@@ -303,18 +338,33 @@ class HuiPowerSankeyCard
       return undefined;
     };
 
+    // Collect small consumers by their effective parent
+    const smallConsumersByParent = new Map<string, SmallConsumer[]>();
+
     prefs.device_consumption.forEach((device, idx) => {
       if (!device.stat_rate) {
         return;
       }
       const value = this._getCurrentPower(device.stat_rate);
 
-      if (value < MIN_POWER_THRESHOLD) {
-        return;
-      }
-
       // Find the effective parent (may be different from direct parent if parent has no stat_rate)
       const effectiveParent = findEffectiveParent(device.included_in_stat);
+
+      if (value < minPowerThreshold) {
+        // Collect small consumers instead of skipping them
+        const parentKey = effectiveParent ?? "home";
+        if (!smallConsumersByParent.has(parentKey)) {
+          smallConsumersByParent.set(parentKey, []);
+        }
+        smallConsumersByParent.get(parentKey)!.push({
+          statRate: device.stat_rate,
+          name: device.name,
+          value,
+          effectiveParent,
+          idx,
+        });
+        return;
+      }
 
       const node = {
         id: device.stat_rate,
@@ -323,6 +373,7 @@ class HuiPowerSankeyCard
         color: getGraphColorByIndex(idx, computedStyle),
         index: 4,
         parent: effectiveParent,
+        entityId: device.stat_rate,
       };
       if (node.parent) {
         parentLinks[node.id] = node.parent;
@@ -334,6 +385,65 @@ class HuiPowerSankeyCard
         untrackedConsumption -= value;
       }
       deviceNodes.push(node);
+    });
+
+    // Process small consumers - create "Other" nodes or show single entities
+    smallConsumersByParent.forEach((consumers, parentKey) => {
+      const totalValue = consumers.reduce((sum, c) => sum + c.value, 0);
+      if (totalValue <= 0) {
+        return;
+      }
+
+      if (consumers.length === 1) {
+        // Single entity - show it directly instead of grouping
+        const consumer = consumers[0];
+        const node = {
+          id: consumer.statRate,
+          label: consumer.name || this._getEntityLabel(consumer.statRate),
+          value: consumer.value,
+          color: getGraphColorByIndex(consumer.idx, computedStyle),
+          index: 4,
+          parent: consumer.effectiveParent,
+          entityId: consumer.statRate,
+        };
+        if (node.parent) {
+          parentLinks[node.id] = node.parent;
+          links.push({
+            source: node.parent,
+            target: node.id,
+          });
+        } else {
+          untrackedConsumption -= consumer.value;
+        }
+        deviceNodes.push(node);
+      } else {
+        // Multiple entities - create "Other" group
+        const otherNodeId = `other_${parentKey}`;
+        const otherNode: Node = {
+          id: otherNodeId,
+          label: this.hass.localize(
+            "ui.panel.lovelace.cards.energy.energy_devices_detail_graph.other"
+          ),
+          value: Math.ceil(totalValue),
+          color: computedStyle
+            .getPropertyValue("--state-unavailable-color")
+            .trim(),
+          index: 4,
+        };
+
+        if (parentKey !== "home") {
+          // Has a parent device
+          parentLinks[otherNodeId] = parentKey;
+          links.push({
+            source: parentKey,
+            target: otherNodeId,
+          });
+        } else {
+          // Top-level "Other" - will be linked to home/floor/area later
+          untrackedConsumption -= totalValue;
+        }
+        deviceNodes.push(otherNode);
+      }
     });
     const devicesWithoutParent = deviceNodes.filter(
       (node) => !parentLinks[node.id]
@@ -417,8 +527,8 @@ class HuiPowerSankeyCard
       });
     });
 
-    // untracked consumption
-    if (untrackedConsumption > 0) {
+    // untracked consumption (only show if larger than 1W)
+    if (untrackedConsumption > 1) {
       nodes.push({
         id: "untracked",
         label: this.hass.localize(
@@ -458,6 +568,7 @@ class HuiPowerSankeyCard
                 .data=${{ nodes, links }}
                 .vertical=${vertical}
                 .valueFormatter=${this._valueFormatter}
+                @node-click=${this._handleNodeClick}
               ></ha-sankey-chart>`
             : html`${this.hass.localize(
                 "ui.panel.lovelace.cards.energy.no_data"
@@ -469,8 +580,15 @@ class HuiPowerSankeyCard
 
   private _valueFormatter = (value: number) =>
     `<div style="direction:ltr; display: inline;">
-      ${formatNumber(value, this.hass.locale, value < 0.1 ? { maximumFractionDigits: 3 } : undefined)}
-      kW</div>`;
+      ${formatPowerShort(this.hass, value)}
+    </div>`;
+
+  private _handleNodeClick(ev: CustomEvent<{ node: Node }>) {
+    const { node } = ev.detail;
+    if (node.entityId) {
+      fireEvent(this, "hass-more-info", { entityId: node.entityId });
+    }
+  }
 
   /**
    * Compute real-time power data from current entity states.
@@ -500,33 +618,34 @@ class HuiPowerSankeyCard
 
     // Collect grid power (positive = import, negative = export)
     prefs.energy_sources
-      .filter((source) => source.type === "grid" && source.power)
+      .filter((source) => source.type === "grid")
       .forEach((source) => {
-        if (source.type === "grid" && source.power) {
-          source.power.forEach((powerSource) => {
-            const value = this._getCurrentPower(powerSource.stat_rate);
-            if (value > 0) {
-              from_grid += value;
-            } else if (value < 0) {
-              to_grid += Math.abs(value);
-            }
-          });
+        if (source.type === "grid" && source.stat_rate) {
+          const value = this._getCurrentPower(source.stat_rate);
+          if (value > 0) {
+            from_grid += value;
+          } else if (value < 0) {
+            to_grid += Math.abs(value);
+          }
         }
       });
 
     // Collect battery power (positive = discharge, negative = charge)
+    // Sum all battery values first, then determine net direction.
+    // Momentary power should only flow in one direction across all batteries.
+    let net_battery = 0;
     prefs.energy_sources
       .filter((source) => source.type === "battery")
       .forEach((source) => {
         if (source.type === "battery" && source.stat_rate) {
-          const value = this._getCurrentPower(source.stat_rate);
-          if (value > 0) {
-            from_battery += value;
-          } else if (value < 0) {
-            to_battery += Math.abs(value);
-          }
+          net_battery += this._getCurrentPower(source.stat_rate);
         }
       });
+    if (net_battery > 0) {
+      from_battery = net_battery;
+    } else if (net_battery < 0) {
+      to_battery = Math.abs(net_battery);
+    }
 
     // Calculate total consumption
     const used_total = from_grid + solar + from_battery - to_grid - to_battery;
@@ -716,41 +835,16 @@ class HuiPowerSankeyCard
   }
 
   /**
-   * Get current power value from entity state, normalized to kW
+   * Get current power value from entity state, normalized to watts (W)
    * @param entityId - The entity ID to get power value from
-   * @returns Power value in kW, or 0 if entity not found or invalid
+   * @returns Power value in W, or 0 if entity not found or invalid
    */
   private _getCurrentPower(entityId: string): number {
     // Track this entity for state change detection
     this._entities.add(entityId);
 
-    const stateObj = this.hass.states[entityId];
-    if (!stateObj) {
-      return 0;
-    }
-    const value = parseFloat(stateObj.state);
-    if (isNaN(value)) {
-      return 0;
-    }
-
-    // Normalize to kW based on unit of measurement (case-sensitive)
-    // Supported units: GW, kW, MW, mW, TW, W
-    const unit = stateObj.attributes.unit_of_measurement;
-    switch (unit) {
-      case "W":
-        return value / 1000;
-      case "mW":
-        return value / 1000000;
-      case "MW":
-        return value * 1000;
-      case "GW":
-        return value * 1000000;
-      case "TW":
-        return value * 1000000000;
-      default:
-        // Assume kW if no unit or unit is kW
-        return value;
-    }
+    // getPowerFromState returns power in W
+    return getPowerFromState(this.hass.states[entityId]) ?? 0;
   }
 
   /**

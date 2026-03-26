@@ -3,6 +3,7 @@ import type { PropertyValues } from "lit";
 import { ReactiveElement } from "lit";
 import { customElement, property, state } from "lit/decorators";
 import { storage } from "../../../common/decorators/storage";
+import { deepEqual } from "../../../common/util/deep-equal";
 import { fireEvent } from "../../../common/dom/fire_event";
 import "../../../components/ha-svg-icon";
 import type { LovelaceSectionElement } from "../../../data/lovelace";
@@ -50,7 +51,7 @@ export class HuiSection extends ConditionalListenerMixin<LovelaceSectionConfig>(
 
   @property({ type: Number }) public index!: number;
 
-  @property({ attribute: false, type: Number }) public viewIndex!: number;
+  @property({ attribute: false }) public viewIndex!: number;
 
   @state() private _cards: HuiCard[] = [];
 
@@ -165,6 +166,11 @@ export class HuiSection extends ConditionalListenerMixin<LovelaceSectionConfig>(
       ...sectionConfig,
       type: sectionConfig.type || DEFAULT_SECTION_LAYOUT,
     };
+
+    if (isStrategy && deepEqual(sectionConfig, this._config)) {
+      return;
+    }
+
     this._config = sectionConfig;
 
     // Create a new layout element if necessary.

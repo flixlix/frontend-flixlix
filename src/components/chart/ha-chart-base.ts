@@ -18,8 +18,11 @@ import { classMap } from "lit/directives/class-map";
 import { styleMap } from "lit/directives/style-map";
 import { ensureArray } from "../../common/array/ensure-array";
 import { getAllGraphColors } from "../../common/color/colors";
+import type { HASSDomEvent } from "../../common/dom/fire_event";
 import { fireEvent } from "../../common/dom/fire_event";
 import { listenMediaQuery } from "../../common/dom/media_query";
+import { afterNextRender } from "../../common/util/render-status";
+import { filterXSS } from "../../common/util/xss";
 import { themesContext } from "../../data/context";
 import type { Themes } from "../../data/ws-themes";
 import type { ECOption } from "../../resources/echarts/echarts";
@@ -27,7 +30,6 @@ import type { HomeAssistant } from "../../types";
 import { isMac } from "../../util/is_mac";
 import "../chips/ha-assist-chip";
 import "../ha-icon-button";
-import { filterXSS } from "../../common/util/xss";
 import { formatTimeLabel } from "./axis-label";
 import { downSampleLineData } from "./down-sample";
 
@@ -42,6 +44,7 @@ export type CustomLegendOption = ECOption["legend"] & {
     id?: string;
     secondaryIds?: string[]; // Other dataset IDs that should be controlled by this legend item.
     name: string;
+    value?: string; // Current value to display next to the name in the legend.
     itemStyle?: Record<string, any>;
   }[];
 };
@@ -92,10 +95,18 @@ export class HaChartBase extends LitElement {
 
   private _resizeAnimationDuration?: number;
 
+  private _suspendResize = false;
+
+  private _layoutTransitionActive = false;
+
   // @ts-ignore
   private _resizeController = new ResizeController(this, {
     callback: () => {
       if (this.chart) {
+        if (this._suspendResize) {
+          this._shouldResizeChart = true;
+          return;
+        }
         if (!this.chart.getZr().animation.isFinished()) {
           this._shouldResizeChart = true;
         } else {
@@ -113,8 +124,11 @@ export class HaChartBase extends LitElement {
 
   private _originalZrFlush?: () => void;
 
+  private _pendingSetup = false;
+
   public disconnectedCallback() {
     super.disconnectedCallback();
+    this._pendingSetup = false;
     while (this._listeners.length) {
       this._listeners.pop()!();
     }
@@ -126,7 +140,13 @@ export class HaChartBase extends LitElement {
   public connectedCallback() {
     super.connectedCallback();
     if (this.hasUpdated) {
-      this._setupChart();
+      this._pendingSetup = true;
+      afterNextRender(() => {
+        if (this.isConnected && this._pendingSetup) {
+          this._pendingSetup = false;
+          this._setupChart();
+        }
+      });
     }
 
     this._listeners.push(
@@ -181,6 +201,26 @@ export class HaChartBase extends LitElement {
         () => window.removeEventListener("keyup", handleKeyUp)
       );
     }
+
+    const handleLayoutTransition: EventListener = (ev) => {
+      const event = ev as HASSDomEvent<HASSDomEvents["hass-layout-transition"]>;
+      this._layoutTransitionActive = Boolean(event.detail?.active);
+      this.toggleAttribute(
+        "layout-transition-active",
+        this._layoutTransitionActive
+      );
+      this._suspendResize = this._layoutTransitionActive;
+      if (!this._suspendResize) {
+        this._resizeChartIfNeeded();
+      }
+    };
+    window.addEventListener("hass-layout-transition", handleLayoutTransition);
+    this._listeners.push(() =>
+      window.removeEventListener(
+        "hass-layout-transition",
+        handleLayoutTransition
+      )
+    );
   }
 
   protected firstUpdated() {
@@ -240,18 +280,23 @@ export class HaChartBase extends LitElement {
           <div class="chart"></div>
         </div>
         ${this._renderLegend()}
-        <div class="chart-controls ${classMap({ small: this.smallControls })}">
-          ${this._isZoomed && !this.hideResetButton
-            ? html`<ha-icon-button
-                class="zoom-reset"
-                .path=${mdiRestart}
-                @click=${this._handleZoomReset}
-                title=${this.hass.localize(
-                  "ui.components.history_charts.zoom_reset"
-                )}
-              ></ha-icon-button>`
-            : nothing}
-          <slot name="button"></slot>
+        <div class="top-controls ${classMap({ small: this.smallControls })}">
+          <slot name="search"></slot>
+          <div
+            class="chart-controls ${classMap({ small: this.smallControls })}"
+          >
+            ${this._isZoomed && !this.hideResetButton
+              ? html`<ha-icon-button
+                  class="zoom-reset"
+                  .path=${mdiRestart}
+                  @click=${this._handleZoomReset}
+                  title=${this.hass.localize(
+                    "ui.components.history_charts.zoom_reset"
+                  )}
+                ></ha-icon-button>`
+              : nothing}
+            <slot name="button"></slot>
+          </div>
         </div>
       </div>
     `;
@@ -294,12 +339,14 @@ export class HaChartBase extends LitElement {
           let itemStyle: Record<string, any> = {};
           let name = "";
           let id = "";
+          let value = "";
           if (typeof item === "string") {
             name = item;
             id = item;
           } else {
             name = item.name ?? "";
             id = item.id ?? name;
+            value = item.value ?? "";
             itemStyle = item.itemStyle ?? {};
           }
           const dataset =
@@ -326,6 +373,7 @@ export class HaChartBase extends LitElement {
               })}
             ></div>
             <div class="label">${name}</div>
+            ${value ? html`<div class="value">${value}</div>` : nothing}
           </li>`;
         })}
         ${items.length > overflowLimit
@@ -539,7 +587,10 @@ export class HaChartBase extends LitElement {
       id: "dataZoom",
       type: "inside",
       orient: "horizontal",
-      filterMode: "none",
+      // "boundaryFilter" is a custom mode added via axis-proxy-patch.ts.
+      // It rescales the Y-axis to the visible data while keeping one point
+      // just outside each boundary to avoid line gaps at the zoom edges.
+      filterMode: "boundaryFilter" as any,
       xAxisIndex: 0,
       moveOnMouseMove: !this._isTouchDevice || this._isZoomed,
       preventDefaultMouseMove: !this._isTouchDevice || this._isZoomed,
@@ -593,6 +644,7 @@ export class HaChartBase extends LitElement {
     }
     const options = {
       animation: !this._reducedMotion,
+      animationDuration: 500,
       darkMode: this._themes.darkMode ?? false,
       aria: { show: true },
       dataZoom: this._getDataZoomConfig(),
@@ -837,10 +889,20 @@ export class HaChartBase extends LitElement {
           };
         }
         if (s.sampling === "minmax") {
-          const minX =
-            xAxis?.min && typeof xAxis.min === "number" ? xAxis.min : undefined;
-          const maxX =
-            xAxis?.max && typeof xAxis.max === "number" ? xAxis.max : undefined;
+          const minX = xAxis?.min
+            ? xAxis.min instanceof Date
+              ? xAxis.min.getTime()
+              : typeof xAxis.min === "number"
+                ? xAxis.min
+                : undefined
+            : undefined;
+          const maxX = xAxis?.max
+            ? xAxis.max instanceof Date
+              ? xAxis.max.getTime()
+              : typeof xAxis.max === "number"
+                ? xAxis.max
+                : undefined
+            : undefined;
           return {
             ...s,
             sampling: undefined,
@@ -987,18 +1049,28 @@ export class HaChartBase extends LitElement {
   }
 
   private _handleChartRenderFinished = () => {
-    if (this._shouldResizeChart) {
-      this.chart?.resize({
-        animation:
-          this._reducedMotion ||
-          typeof this._resizeAnimationDuration !== "number"
-            ? undefined
-            : { duration: this._resizeAnimationDuration },
-      });
-      this._shouldResizeChart = false;
-      this._resizeAnimationDuration = undefined;
-    }
+    this._resizeChartIfNeeded();
   };
+
+  private _resizeChartIfNeeded() {
+    if (!this.chart || !this._shouldResizeChart) {
+      return;
+    }
+    if (this._suspendResize) {
+      return;
+    }
+    if (!this.chart.getZr().animation.isFinished()) {
+      return;
+    }
+    this.chart.resize({
+      animation:
+        this._reducedMotion || typeof this._resizeAnimationDuration !== "number"
+          ? undefined
+          : { duration: this._resizeAnimationDuration },
+    });
+    this._shouldResizeChart = false;
+    this._resizeAnimationDuration = undefined;
+  }
 
   private _compareCustomLegendOptions(
     oldOptions: ECOption | undefined,
@@ -1021,11 +1093,18 @@ export class HaChartBase extends LitElement {
       display: block;
       position: relative;
       letter-spacing: normal;
+      overflow: visible;
+    }
+    :host([layout-transition-active]),
+    :host([layout-transition-active]) .container,
+    :host([layout-transition-active]) .chart-container {
+      overflow: hidden;
     }
     .container {
       display: flex;
       flex-direction: column;
       position: relative;
+      overflow: visible;
     }
     .container.has-height {
       max-height: var(--chart-max-height, 350px);
@@ -1033,6 +1112,7 @@ export class HaChartBase extends LitElement {
     .chart-container {
       width: 100%;
       max-height: var(--chart-max-height, 350px);
+      overflow: visible;
     }
     .has-height .chart-container {
       flex: 1;
@@ -1041,29 +1121,48 @@ export class HaChartBase extends LitElement {
       height: 100%;
       width: 100%;
     }
-    .chart-controls {
+    .top-controls {
       position: absolute;
-      top: 16px;
-      right: 4px;
+      top: var(--ha-space-4);
+      inset-inline-start: var(--ha-space-4);
+      inset-inline-end: var(--ha-space-1);
+      display: flex;
+      align-items: flex-start;
+      gap: var(--ha-space-2);
+      z-index: 1;
+      pointer-events: none;
+    }
+    ::slotted([slot="search"]) {
+      flex: 1 1 250px;
+      min-width: 0;
+      max-width: 250px;
+      pointer-events: auto;
+    }
+    .chart-controls {
       display: flex;
       flex-direction: column;
       gap: var(--ha-space-1);
+      margin-inline-start: auto;
+      flex-shrink: 0;
+      pointer-events: auto;
+    }
+    .top-controls.small {
+      top: 0;
     }
     .chart-controls.small {
-      top: 0;
       flex-direction: row;
     }
     .chart-controls ha-icon-button,
     .chart-controls ::slotted(ha-icon-button) {
       background: var(--card-background-color);
       border-radius: var(--ha-border-radius-sm);
-      --mdc-icon-button-size: 32px;
+      --ha-icon-button-size: 32px;
       color: var(--primary-color);
       border: 1px solid var(--divider-color);
     }
     .chart-controls.small ha-icon-button,
     .chart-controls.small ::slotted(ha-icon-button) {
-      --mdc-icon-button-size: 22px;
+      --ha-icon-button-size: 22px;
       --mdc-icon-size: 16px;
     }
     .chart-controls ha-icon-button.inactive,
@@ -1098,6 +1197,9 @@ export class HaChartBase extends LitElement {
     .chart-legend.multiple-items li {
       max-width: 220px;
     }
+    .chart-legend.multiple-items li:has(.value) {
+      max-width: 300px;
+    }
     .chart-legend .hidden {
       color: var(--secondary-text-color);
     }
@@ -1105,6 +1207,12 @@ export class HaChartBase extends LitElement {
       text-overflow: ellipsis;
       white-space: nowrap;
       overflow: hidden;
+    }
+    .chart-legend .value {
+      color: var(--secondary-text-color);
+      margin-inline-start: var(--ha-space-1);
+      flex-shrink: 0;
+      white-space: nowrap;
     }
     .chart-legend .bullet {
       border-width: 1px;

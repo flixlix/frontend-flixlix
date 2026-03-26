@@ -1,6 +1,6 @@
+import { consume } from "@lit/context";
 import type { SelectedDetail } from "@material/mwc-list";
 import { mdiCog, mdiFilterVariantRemove } from "@mdi/js";
-import type { UnsubscribeFunc } from "home-assistant-js-websocket";
 import type { CSSResultGroup } from "lit";
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators";
@@ -10,9 +10,8 @@ import { computeCssColor } from "../common/color/compute-color";
 import { fireEvent } from "../common/dom/fire_event";
 import { navigate } from "../common/navigate";
 import { stringCompare } from "../common/string/compare";
-import type { LabelRegistryEntry } from "../data/label_registry";
-import { subscribeLabelRegistry } from "../data/label_registry";
-import { SubscribeMixin } from "../mixins/subscribe-mixin";
+import { labelsContext } from "../data/context";
+import type { LabelRegistryEntry } from "../data/label/label_registry";
 import { haStyleScrollbar } from "../resources/styles";
 import type { HomeAssistant } from "../types";
 import "./ha-check-list-item";
@@ -22,10 +21,11 @@ import "./ha-icon-button";
 import "./ha-label";
 import "./ha-list";
 import "./ha-list-item";
-import "./search-input-outlined";
+import "./input/ha-input-search";
+import type { HaInputSearch } from "./input/ha-input-search";
 
 @customElement("ha-filter-labels")
-export class HaFilterLabels extends SubscribeMixin(LitElement) {
+export class HaFilterLabels extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
 
   @property({ attribute: false }) public value?: string[];
@@ -34,19 +34,13 @@ export class HaFilterLabels extends SubscribeMixin(LitElement) {
 
   @property({ type: Boolean, reflect: true }) public expanded = false;
 
-  @state() private _labels: LabelRegistryEntry[] = [];
+  @consume({ context: labelsContext, subscribe: true })
+  @state()
+  private _labels?: LabelRegistryEntry[];
 
   @state() private _shouldRender = false;
 
   @state() private _filter?: string;
-
-  protected hassSubscribe(): (UnsubscribeFunc | Promise<UnsubscribeFunc>)[] {
-    return [
-      subscribeLabelRegistry(this.hass.connection, (labels) => {
-        this._labels = labels;
-      }),
-    ];
-  }
 
   private _filteredLabels = memoizeOne(
     // `_value` used to recalculate the memoization when the selection changes
@@ -86,19 +80,23 @@ export class HaFilterLabels extends SubscribeMixin(LitElement) {
             : nothing}
         </div>
         ${this._shouldRender
-          ? html`<search-input-outlined
-                .hass=${this.hass}
-                .filter=${this._filter}
-                @value-changed=${this._handleSearchChange}
+          ? html`<ha-input-search
+                appearance="outlined"
+                .value=${this._filter}
+                @input=${this._handleSearchChange}
               >
-              </search-input-outlined>
+              </ha-input-search>
               <ha-list
                 @selected=${this._labelSelected}
                 class="ha-scrollbar"
                 multi
               >
                 ${repeat(
-                  this._filteredLabels(this._labels, this._filter, this.value),
+                  this._filteredLabels(
+                    this._labels || [],
+                    this._filter,
+                    this.value
+                  ),
                   (label) => label.label_id,
                   (label) => {
                     const color = label.color
@@ -145,7 +143,11 @@ export class HaFilterLabels extends SubscribeMixin(LitElement) {
       setTimeout(() => {
         if (!this.expanded) return;
         this.renderRoot.querySelector("ha-list")!.style.height =
-          `${this.clientHeight - (49 + 48 + 32)}px`;
+          `${this.clientHeight - (49 + 48 + 32 + 4)}px`;
+        // 49px - height of a header + 1px
+        // 4px - padding-top of the search-input
+        // 32px - height of the search input
+        // 48px - height of ha-list-item
       }, 300);
     }
   }
@@ -162,35 +164,39 @@ export class HaFilterLabels extends SubscribeMixin(LitElement) {
     this.expanded = ev.detail.expanded;
   }
 
-  private _handleSearchChange(ev: CustomEvent) {
-    this._filter = ev.detail.value.toLowerCase();
+  private _handleSearchChange(ev: InputEvent) {
+    const value = (ev.target as HaInputSearch).value ?? "";
+    this._filter = value.toLowerCase();
   }
 
   private async _labelSelected(ev: CustomEvent<SelectedDetail<Set<number>>>) {
-    if (!ev.detail.index.size) {
-      fireEvent(this, "data-table-filter-changed", {
-        value: [],
-        items: undefined,
-      });
-      this.value = [];
-      return;
-    }
-
-    const value: string[] = [];
     const filteredLabels = this._filteredLabels(
-      this._labels,
+      this._labels || [],
       this._filter,
       this.value
     );
 
+    const filteredLabelIds = new Set(filteredLabels.map((l) => l.label_id));
+
+    // Keep previously selected labels that are not in the current filtered view
+    const preservedLabels = (this.value || []).filter(
+      (id) => !filteredLabelIds.has(id)
+    );
+
+    // Build the new selection from the filtered labels based on selected indices
+    const newlySelectedLabels: string[] = [];
     for (const index of ev.detail.index) {
-      const labelId = filteredLabels[index].label_id;
-      value.push(labelId);
+      const labelId = filteredLabels[index]?.label_id;
+      if (labelId) {
+        newlySelectedLabels.push(labelId);
+      }
     }
-    this.value = value;
+
+    const value = [...preservedLabels, ...newlySelectedLabels];
+    this.value = value.length ? value : [];
 
     fireEvent(this, "data-table-filter-changed", {
-      value,
+      value: value.length ? value : undefined,
       items: undefined,
     });
   }
@@ -257,7 +263,7 @@ export class HaFilterLabels extends SubscribeMixin(LitElement) {
           right: 0;
           left: 0;
         }
-        search-input-outlined {
+        ha-input-search {
           display: block;
           padding: var(--ha-space-1) var(--ha-space-2) 0;
         }

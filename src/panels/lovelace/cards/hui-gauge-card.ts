@@ -10,7 +10,7 @@ import { isValidEntityId } from "../../../common/entity/valid_entity_id";
 import { getNumberFormatOptions } from "../../../common/number/format_number";
 import "../../../components/ha-card";
 import "../../../components/ha-gauge";
-import { UNAVAILABLE } from "../../../data/entity";
+import { UNAVAILABLE } from "../../../data/entity/entity";
 import type { ActionHandlerEvent } from "../../../data/lovelace/action_handler";
 import type { HomeAssistant } from "../../../types";
 import { actionHandler } from "../common/directives/action-handler-directive";
@@ -96,8 +96,6 @@ class HuiGaugeCard extends LitElement implements LovelaceCard {
       `;
     }
 
-    const entityState = Number(stateObj.state);
-
     if (stateObj.state === UNAVAILABLE) {
       return html`
         <hui-warning
@@ -164,12 +162,12 @@ class HuiGaugeCard extends LitElement implements LovelaceCard {
             .unit_of_measurement ||
           ""}
           style=${styleMap({
-            "--gauge-color": this._computeSeverity(entityState),
+            "--gauge-color": this._computeSeverity(Number(valueToDisplay)),
           })}
           .needle=${this._config!.needle}
           .levels=${this._config!.needle ? this._severityLevels() : undefined}
         ></ha-gauge>
-        <div class="name" .title=${name}>${name}</div>
+        <p class="title" .title=${name}>${name}</p>
       </ha-card>
     `;
   }
@@ -284,10 +282,15 @@ class HuiGaugeCard extends LitElement implements LovelaceCard {
   }
 
   static styles = css`
+    :host {
+      position: relative;
+      display: block;
+      height: 100%;
+    }
     ha-card {
       height: 100%;
       overflow: hidden;
-      padding: 16px;
+      padding: var(--ha-space-3);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -303,18 +306,23 @@ class HuiGaugeCard extends LitElement implements LovelaceCard {
       outline: none;
     }
 
-    ha-gauge {
+    .title {
       width: 100%;
-      max-width: 250px;
+      font-size: var(--ha-font-size-l);
+      line-height: var(--ha-line-height-expanded);
+      padding: 0px 0px var(--ha-space-2) 0px;
+      margin: 0;
+      text-align: center;
+      box-sizing: border-box;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: none;
+      color: var(--primary-text-color);
     }
 
-    .name {
-      text-align: center;
-      line-height: initial;
-      color: var(--primary-text-color);
+    ha-gauge {
       width: 100%;
-      font-size: var(--ha-font-size-m);
-      margin-top: 8px;
     }
   `;
 }

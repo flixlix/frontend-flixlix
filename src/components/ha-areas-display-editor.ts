@@ -4,13 +4,11 @@ import { LitElement, html } from "lit";
 import { customElement, property } from "lit/decorators";
 import { fireEvent } from "../common/dom/fire_event";
 import { getAreaContext } from "../common/entity/context/get_area_context";
-import { areaCompare } from "../data/area_registry";
 import type { HomeAssistant } from "../types";
 import "./ha-expansion-panel";
 import "./ha-items-display-editor";
 import type { DisplayItem, DisplayValue } from "./ha-items-display-editor";
 import "./ha-svg-icon";
-import "./ha-textfield";
 
 export interface AreasDisplayValue {
   hidden?: string[];
@@ -37,11 +35,7 @@ export class HaAreasDisplayEditor extends LitElement {
   public showNavigationButton = false;
 
   protected render(): TemplateResult {
-    const compare = areaCompare(this.hass.areas);
-
-    const areas = Object.values(this.hass.areas).sort((areaA, areaB) =>
-      compare(areaA.area_id, areaB.area_id)
-    );
+    const areas = Object.values(this.hass.areas);
 
     const items: DisplayItem[] = areas.map((area) => {
       const { floor } = getAreaContext(area, this.hass.floors);

@@ -12,7 +12,10 @@ import type { Context, HomeAssistant } from "../types";
 import type { BlueprintInput } from "./blueprint";
 import type { ConditionDescription } from "./condition";
 import { CONDITION_BUILDING_BLOCKS } from "./condition";
-import type { DeviceCondition, DeviceTrigger } from "./device_automation";
+import type {
+  DeviceCondition,
+  DeviceTrigger,
+} from "./device/device_automation";
 import type { Action, Field, MODES } from "./script";
 import { migrateAutomationAction } from "./script";
 import type { TriggerDescription } from "./trigger";
@@ -626,6 +629,7 @@ export interface ActionSidebarConfig extends BaseSidebarConfig {
   save: (value: Action) => void;
   rename: () => void;
   disable: () => void;
+  continueOnError: () => void;
   duplicate: () => void;
   cut: () => void;
   copy: () => void;

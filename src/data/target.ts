@@ -3,19 +3,23 @@ import { computeDomain } from "../common/entity/compute_domain";
 import type { HaDevicePickerDeviceFilterFunc } from "../components/device/ha-device-picker";
 import type { PickerComboBoxItem } from "../components/ha-picker-combo-box";
 import type { HomeAssistant } from "../types";
-import type { FloorComboBoxItem } from "./area_floor";
-import type { AreaRegistryEntry } from "./area_registry";
-import type { DevicePickerItem, DeviceRegistryEntry } from "./device_registry";
-import type { HaEntityPickerEntityFilterFunc } from "./entity";
-import type {
-  EntityComboBoxItem,
-  EntityRegistryDisplayEntry,
-} from "./entity_registry";
+import type { AreaRegistryEntry } from "./area/area_registry";
+import type { FloorComboBoxItem } from "./area_floor_picker";
+import type { DevicePickerItem } from "./device/device_picker";
+import type { DeviceRegistryEntry } from "./device/device_registry";
+import type { HaEntityPickerEntityFilterFunc } from "./entity/entity";
+import type { EntityComboBoxItem } from "./entity/entity_picker";
+import type { EntityRegistryDisplayEntry } from "./entity/entity_registry";
 
 export const TARGET_SEPARATOR = "________";
 
 export type TargetType = "entity" | "device" | "area" | "label" | "floor";
 export type TargetTypeFloorless = Exclude<TargetType, "floor">;
+
+export interface TargetItem {
+  type: TargetType;
+  id: string;
+}
 
 export interface SingleHassServiceTarget {
   entity_id?: string;
@@ -43,12 +47,33 @@ export interface ExtractFromTargetResultReferenced {
 
 export const extractFromTarget = async (
   hass: HomeAssistant,
-  target: HassServiceTarget
+  target: HassServiceTarget,
+  expandGroup = false
 ) =>
   hass.callWS<ExtractFromTargetResult>({
     type: "extract_from_target",
     target,
+    expand_group: expandGroup,
   });
+
+export const getResolvedTargetEntityCount = async (
+  hass: HomeAssistant,
+  target?: HassServiceTarget
+): Promise<number | undefined> => {
+  if (!target) {
+    return undefined;
+  }
+
+  try {
+    return (await extractFromTarget(hass, target, true)).referenced_entities
+      .length;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("Error resolving target entity count", err);
+  }
+
+  return undefined;
+};
 
 export const getTriggersForTarget = async (
   callWS: HomeAssistant["callWS"],

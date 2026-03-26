@@ -3,7 +3,7 @@ import { TZDate } from "@date-fns/tz";
 import { addDays, isSameDay } from "date-fns";
 import type { CSSResultGroup } from "lit";
 import { LitElement, css, html, nothing } from "lit";
-import { property, state } from "lit/decorators";
+import { customElement, property, state } from "lit/decorators";
 import { formatDate } from "../../common/datetime/format_date";
 import { formatDateTime } from "../../common/datetime/format_date_time";
 import { formatTime } from "../../common/datetime/format_time";
@@ -13,8 +13,9 @@ import "../../components/entity/state-info";
 import "../../components/ha-alert";
 import "../../components/ha-button";
 import "../../components/ha-date-input";
-import { createCloseHeading } from "../../components/ha-dialog";
+import "../../components/ha-dialog-footer";
 import "../../components/ha-time-input";
+import "../../components/ha-dialog";
 import type { CalendarEventMutableParams } from "../../data/calendar";
 import { deleteCalendarEvent } from "../../data/calendar";
 import { haStyleDialog } from "../../resources/styles";
@@ -26,10 +27,13 @@ import type { CalendarEventDetailDialogParams } from "./show-dialog-calendar-eve
 import { showCalendarEventEditDialog } from "./show-dialog-calendar-event-editor";
 import { resolveTimeZone } from "../../common/datetime/resolve-time-zone";
 
+@customElement("dialog-calendar-event-detail")
 class DialogCalendarEventDetail extends LitElement {
   @property({ attribute: false }) public hass!: HomeAssistant;
 
   @state() private _params?: CalendarEventDetailDialogParams;
+
+  @state() private _open = false;
 
   @state() private _calendarId?: string;
 
@@ -43,6 +47,7 @@ class DialogCalendarEventDetail extends LitElement {
     params: CalendarEventDetailDialogParams
   ): Promise<void> {
     this._params = params;
+    this._open = true;
     if (params.entry) {
       const entry = params.entry!;
       this._data = entry;
@@ -51,9 +56,7 @@ class DialogCalendarEventDetail extends LitElement {
   }
 
   public closeDialog(): void {
-    this._calendarId = undefined;
-    this._params = undefined;
-    fireEvent(this, "dialog-closed", { dialog: this.localName });
+    this._open = false;
   }
 
   protected render() {
@@ -63,11 +66,10 @@ class DialogCalendarEventDetail extends LitElement {
     const stateObj = this.hass.states[this._calendarId!];
     return html`
       <ha-dialog
-        open
-        @closed=${this.closeDialog}
-        scrimClickAction
-        escapeKeyAction
-        .heading=${createCloseHeading(this.hass, this._data!.summary)}
+        .hass=${this.hass}
+        .open=${this._open}
+        header-title=${this._data!.summary}
+        @closed=${this._dialogClosed}
       >
         <div class="content">
           ${this._error
@@ -99,30 +101,39 @@ class DialogCalendarEventDetail extends LitElement {
             ></state-info>
           </div>
         </div>
-        ${this._params.canDelete
-          ? html`
-              <ha-button
-                slot="secondaryAction"
-                variant="danger"
-                appearance="plain"
-                @click=${this._deleteEvent}
+        <ha-dialog-footer slot="footer">
+          ${this._params.canDelete
+            ? html`
+                <ha-button
+                  slot="secondaryAction"
+                  variant="danger"
+                  appearance="plain"
+                  @click=${this._deleteEvent}
+                  .disabled=${this._submitting}
+                >
+                  ${this.hass.localize("ui.components.calendar.event.delete")}
+                </ha-button>
+              `
+            : ""}
+          ${this._params.canEdit
+            ? html`<ha-button
+                slot="primaryAction"
+                @click=${this._editEvent}
                 .disabled=${this._submitting}
               >
-                ${this.hass.localize("ui.components.calendar.event.delete")}
-              </ha-button>
-            `
-          : ""}
-        ${this._params.canEdit
-          ? html`<ha-button
-              slot="primaryAction"
-              @click=${this._editEvent}
-              .disabled=${this._submitting}
-            >
-              ${this.hass.localize("ui.components.calendar.event.edit")}
-            </ha-button>`
-          : ""}
+                ${this.hass.localize("ui.components.calendar.event.edit")}
+              </ha-button>`
+            : ""}
+        </ha-dialog-footer>
       </ha-dialog>
     `;
+  }
+
+  private _dialogClosed(): void {
+    this._calendarId = undefined;
+    this._params = undefined;
+    this._open = false;
+    fireEvent(this, "dialog-closed", { dialog: this.localName });
   }
 
   private _renderRRuleAsText(value: string) {
@@ -260,6 +271,7 @@ class DialogCalendarEventDetail extends LitElement {
           color: var(--secondary-text-color);
           max-width: 300px;
           overflow-wrap: break-word;
+          white-space: pre-line;
         }
       `,
     ];
@@ -271,8 +283,3 @@ declare global {
     "dialog-calendar-event-detail": DialogCalendarEventDetail;
   }
 }
-
-customElements.define(
-  "dialog-calendar-event-detail",
-  DialogCalendarEventDetail
-);

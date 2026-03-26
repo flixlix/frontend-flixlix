@@ -142,7 +142,7 @@ export const subscribeHistory = (
   );
 };
 
-class HistoryStream {
+export class HistoryStream {
   hass: HomeAssistant;
 
   hoursToShow?: number;
@@ -221,6 +221,7 @@ class HistoryStream {
         // only expire the rest of the history as it ages.
         const lastExpiredState = expiredStates[expiredStates.length - 1];
         lastExpiredState.lu = purgeBeforePythonTime;
+        delete lastExpiredState.lc;
         newHistory[entityId].unshift(lastExpiredState);
       }
     }
@@ -463,6 +464,15 @@ export const convertStatisticsToHistory = (
   return statisticsHistory;
 };
 
+export const limitedHistoryFromStateObj = (
+  state: HassEntity
+): EntityHistoryState[] => [
+  {
+    s: state.state,
+    a: state.attributes,
+    lu: new Date(state.last_updated).getTime() / 1000,
+  },
+];
 export const computeHistory = (
   hass: HomeAssistant,
   stateHistory: HistoryStates,
@@ -483,13 +493,9 @@ export const computeHistory = (
     if (entity in stateHistory) {
       localStateHistory[entity] = stateHistory[entity];
     } else if (hass.states[entity]) {
-      localStateHistory[entity] = [
-        {
-          s: hass.states[entity].state,
-          a: hass.states[entity].attributes,
-          lu: new Date(hass.states[entity].last_updated).getTime() / 1000,
-        },
-      ];
+      localStateHistory[entity] = limitedHistoryFromStateObj(
+        hass.states[entity]
+      );
     }
   });
 

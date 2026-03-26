@@ -26,6 +26,7 @@ import {
   mdiHomeAutomation,
   mdiImage,
   mdiImageFilterFrames,
+  mdiLedOn,
   mdiLightbulb,
   mdiMapMarkerRadius,
   mdiMicrophoneMessage,
@@ -56,11 +57,11 @@ import type { HomeAssistant } from "../types";
 import type {
   EntityRegistryDisplayEntry,
   EntityRegistryEntry,
-} from "./entity_registry";
+} from "./entity/entity_registry";
 
 import { mdiHomeAssistant } from "../resources/home-assistant-logo-svg";
-import { getTriggerDomain, getTriggerObjectId } from "./trigger";
 import { getConditionDomain, getConditionObjectId } from "./condition";
+import { getTriggerDomain, getTriggerObjectId } from "./trigger";
 
 /** Icon to use when no icon specified for service. */
 export const DEFAULT_SERVICE_ICON = mdiRoomService;
@@ -89,6 +90,7 @@ export const FALLBACK_DOMAIN_ICONS = {
   homekit: mdiHomeAutomation,
   image_processing: mdiImageFilterFrames,
   image: mdiImage,
+  infrared: mdiLedOn,
   input_boolean: mdiToggleSwitch,
   input_button: mdiButtonPointer,
   input_datetime: mdiCalendarClock,

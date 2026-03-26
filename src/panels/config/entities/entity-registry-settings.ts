@@ -3,6 +3,9 @@ import type { CSSResultGroup, PropertyValues } from "lit";
 import { css, html, LitElement } from "lit";
 import { customElement, property, query, state } from "lit/decorators";
 import { fireEvent } from "../../../common/dom/fire_event";
+import { computeDeviceName } from "../../../common/entity/compute_device_name";
+import { computeEntityEntryName } from "../../../common/entity/compute_entity_name";
+import { getEntityEntryContext } from "../../../common/entity/context/get_entity_context";
 import "../../../components/ha-alert";
 import "../../../components/ha-button";
 import type { ConfigEntry } from "../../../data/config_entries";
@@ -10,12 +13,12 @@ import {
   deleteConfigEntry,
   getConfigEntry,
 } from "../../../data/config_entries";
-import { updateDeviceRegistryEntry } from "../../../data/device_registry";
-import type { ExtEntityRegistryEntry } from "../../../data/entity_registry";
+import { updateDeviceRegistryEntry } from "../../../data/device/device_registry";
+import type { ExtEntityRegistryEntry } from "../../../data/entity/entity_registry";
 import {
   removeEntityRegistryEntry,
   updateEntityRegistryEntry,
-} from "../../../data/entity_registry";
+} from "../../../data/entity/entity_registry";
 import { fetchIntegrationManifest } from "../../../data/integration";
 import {
   showAlertDialog,
@@ -27,6 +30,7 @@ import type { HomeAssistant } from "../../../types";
 import { showDeviceRegistryDetailDialog } from "../devices/device-registry-detail/show-dialog-device-registry-detail";
 import "./entity-registry-settings-editor";
 import type { EntityRegistrySettingsEditor } from "./entity-registry-settings-editor";
+import { getDeleteConfirmationText } from "./get-delete-confirmation-text";
 
 @customElement("entity-registry-settings")
 export class EntityRegistrySettings extends SubscribeMixin(LitElement) {
@@ -209,11 +213,32 @@ export class EntityRegistrySettings extends SubscribeMixin(LitElement) {
   }
 
   private async _confirmDeleteEntry(): Promise<void> {
+    let name = computeEntityEntryName(this.entry);
+    if (!name) {
+      const { device } = getEntityEntryContext(
+        this.entry,
+        this.hass.entities,
+        this.hass.devices,
+        this.hass.areas,
+        this.hass.floors
+      );
+      if (device) {
+        name = computeDeviceName(device);
+      }
+    }
+
+    const confirmationText = await getDeleteConfirmationText(
+      this.hass,
+      this.entry,
+      name
+    );
+
     if (
       !(await showConfirmationDialog(this, {
-        text: this.hass.localize(
-          "ui.dialogs.entity_registry.editor.confirm_delete"
+        title: this.hass.localize(
+          "ui.dialogs.entity_registry.editor.confirm_delete_title"
         ),
+        text: confirmationText,
         confirmText: this.hass.localize("ui.common.delete"),
         dismissText: this.hass.localize("ui.common.cancel"),
         destructive: true,
@@ -244,14 +269,15 @@ export class EntityRegistrySettings extends SubscribeMixin(LitElement) {
           display: block;
         }
         .container {
-          padding: 8px 24px 20px 24px;
+          padding: var(--ha-space-2) var(--ha-space-6) var(--ha-space-5)
+            var(--ha-space-6);
         }
         .buttons {
           box-sizing: border-box;
           display: flex;
-          padding: 16px;
+          padding: var(--ha-space-4);
           justify-content: space-between;
-          padding-bottom: max(var(--safe-area-inset-bottom), 16px);
+          padding-bottom: max(var(--safe-area-inset-bottom), var(--ha-space-4));
           background-color: var(--mdc-theme-surface, #fff);
           border-top: 1px solid var(--divider-color);
           position: sticky;
